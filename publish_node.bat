@@ -8,67 +8,67 @@ echo   Folder: %cd%
 echo ============================================
 echo.
 
-:: ---- Step 0: apikey.txt를 .gitignore에 자동 등록 (실수로 커밋되는 것 방지) ----
+:: ---- Step 0: Auto-add apikey.txt to .gitignore (prevent accidental commit) ----
 findstr /x "apikey.txt" .gitignore >nul 2>&1
 if errorlevel 1 (
     echo apikey.txt>> .gitignore
-    echo (.gitignore에 apikey.txt 추가함 - API 키가 절대 커밋되지 않도록 보호)
+    echo (Added apikey.txt to .gitignore - API key will never be committed)
 )
 
-:: ---- Step 1: 변경사항 확인 및 커밋 ----
-echo [Step 1] 현재 변경된 파일 목록:
+:: ---- Step 1: Review and commit changes ----
+echo [Step 1] Currently changed files:
 git status --short
 echo.
-set /p DOCOMMIT="변경사항을 지금 커밋할까요? (y/n): "
+set /p DOCOMMIT="Commit these changes now? (y/n): "
 if /i "%DOCOMMIT%"=="y" (
-    set /p COMMITMSG="=== 커밋 메시지를 입력하세요 (여기만 타이핑) ==="
+    set /p COMMITMSG="Enter commit message: "
     git add .
     git commit -m "!COMMITMSG!"
-    echo 커밋 완료.
+    echo Commit complete.
 ) else (
-    echo 커밋 단계 건너뜀.
+    echo Skipping commit step.
 )
 echo.
 
-:: ---- Step 2: 버전 올리기 ----
-echo [Step 2] pyproject.toml 버전 자동 증가
-set /p DOBUMP="버전을 올릴까요? (patch +1) (y/n): "
+:: ---- Step 2: Bump version ----
+echo [Step 2] Auto-increment pyproject.toml version
+set /p DOBUMP="Bump the version? (patch +1) (y/n): "
 if /i "%DOBUMP%"=="y" (
     for /f "delims=" %%A in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0bump_version.ps1"') do set VERLINE=%%A
-    echo 버전 변경: !VERLINE!
+    echo Version changed: !VERLINE!
     git add pyproject.toml
     git commit -m "bump version !VERLINE!"
 ) else (
-    echo 버전 올리기 건너뜀 - 이미 새 버전이면 그대로 진행합니다.
+    echo Skipping version bump - proceeding as-is if already a new version.
 )
 echo.
 
-:: ---- Step 3: GitHub push ----
-echo [Step 3] GitHub로 push 중...
+:: ---- Step 3: Push to GitHub ----
+echo [Step 3] Pushing to GitHub...
 git push
 if errorlevel 1 (
     echo.
-    echo !!! PUSH 실패 !!!
-    echo 아래 명령을 직접 실행한 뒤 이 배치파일을 다시 실행하세요:
+    echo !!! PUSH FAILED !!!
+    echo Run the command below manually, then re-run this batch file:
     echo     git pull origin main
     pause
     exit /b 1
 )
-echo push 완료.
+echo Push complete.
 echo.
 
-:: ---- Step 4: API 키 준비 ----
-echo [Step 4] Comfy Registry API 키
+:: ---- Step 4: Prepare API key ----
+echo [Step 4] Comfy Registry API key
 echo.
-echo   키가 없다면 아래 순서로 새로 만드세요:
-echo   1. https://registry.comfy.org/nodes 접속 (로그인 필요)
-echo   2. 목록에서 "comal" Publisher 클릭
-echo   3. "+ Create new key" 버튼 클릭 후 이름 입력, 발급된 키 즉시 복사
-echo      (키는 그 순간에만 표시되며, 다시 볼 수 없습니다)
+echo   If you don't have a key yet, create one as follows:
+echo   1. Go to https://registry.comfy.org/nodes (login required)
+echo   2. Click the "comal" Publisher in the list
+echo   3. Click "+ Create new key", enter a name, and copy the key immediately
+echo      (the key is shown only once and cannot be viewed again)
 echo.
 set KEYFILE=%~dp0apikey.txt
 if exist "%KEYFILE%" (
-    set /p USEEXISTING="저장된 API 키가 있습니다. 그걸 쓸까요? (y/n): "
+    set /p USEEXISTING="A saved API key was found. Use it? (y/n): "
 ) else (
     set USEEXISTING=n
 )
@@ -76,22 +76,22 @@ if exist "%KEYFILE%" (
 if /i "!USEEXISTING!"=="y" (
     set /p COMFY_API_KEY=<"%KEYFILE%"
 ) else (
-    set /p COMFY_API_KEY="=== 위 링크에서 발급받은 API 키를 붙여넣으세요 (여기만 타이핑) ==="
-    set /p SAVEKEY="다음에 다시 안 치도록 로컬에 저장할까요? (y/n): "
+    set /p COMFY_API_KEY="Paste the API key from the link above: "
+    set /p SAVEKEY="Save it locally so you don't need to type it again? (y/n): "
     if /i "!SAVEKEY!"=="y" (
         echo !COMFY_API_KEY!> "%KEYFILE%"
-        echo 저장 완료: %KEYFILE%  ^(.gitignore로 보호되어 있어 커밋되지 않습니다^)
+        echo Saved: %KEYFILE%  ^(protected by .gitignore, will not be committed^)
     )
 )
 echo.
 
 
-:: ---- Step 5: 실제 publish ----
-echo [Step 5] registry.comfy.org로 노드 publish 중...
+:: ---- Step 5: Actual publish ----
+echo [Step 5] Publishing node to registry.comfy.org...
 comfy node publish
 
 echo.
 echo ============================================
-echo   완료. 위 메시지에서 성공/에러 여부를 확인하세요.
+echo   Done. Check the messages above for success or errors.
 echo ============================================
 pause
