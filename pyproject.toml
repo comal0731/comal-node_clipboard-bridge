@@ -1,7 +1,7 @@
 [project]
 name = "comal-node-clipboard-bridge"
 description = "This node automatically pastes copied images and text."
-version = "1.0.0"
+version = "1.0.1"
 license = { file = "LICENSE" }
 
 [project.urls]
