@@ -47,15 +47,22 @@ echo.
 echo [Step 3] Pushing to GitHub...
 git push
 if errorlevel 1 (
-    echo.
-    echo !!! PUSH FAILED !!!
-    echo Run the command below manually, then re-run this batch file:
-    echo     git pull origin main
-    pause
-    exit /b 1
+    echo No upstream branch set yet. Attempting to set it automatically...
+    git push --set-upstream origin main
+    if errorlevel 1 (
+        echo.
+        echo *** PUSH FAILED ***
+        echo This may be because the remote has commits you don't have locally.
+        echo Open a new terminal in this folder and run:
+        echo     git pull origin main --rebase
+        echo Then re-run this batch file.
+        pause
+        exit /b 1
+    )
 )
 echo Push complete.
 echo.
+
 
 :: ---- Step 4: Prepare API key ----
 echo [Step 4] Comfy Registry API key
