@@ -1,0 +1,13 @@
+[project]
+name = ""
+description = ""
+version = "1.0.0"
+license = { file = "LICENSE" }
+
+[project.urls]
+Repository = "https://github.com/comal0731/"
+
+[tool.comfy]
+PublisherId = "comal"
+DisplayName = ""
+Icon = ""
