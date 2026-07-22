@@ -45,6 +45,21 @@ echo.
 
 :: ---- Step 3: Push to GitHub ----
 echo [Step 3] Pushing to GitHub...
+
+for /f "tokens=2" %%U in ('git remote get-url origin 2^>nul') do set "CURRENT_REMOTE=%%U"
+echo Current remote: !CURRENT_REMOTE!
+echo(!CURRENT_REMOTE! | findstr /r "github\.com/[A-Za-z0-9._-]*/[A-Za-z0-9._-]*\.git$" >nul
+if errorlevel 1 (
+    echo.
+    echo *** WARNING: origin URL looks malformed (missing repo name?) ***
+    echo Current value: !CURRENT_REMOTE!
+    set /p FIXURL="Paste the correct GitHub repo URL to fix it (or press Enter to skip): "
+    if not "!FIXURL!"=="" (
+        git remote set-url origin "!FIXURL!"
+        echo Remote URL updated.
+    )
+)
+
 git push
 if errorlevel 1 (
     echo No upstream branch set yet. Attempting to set it automatically...
@@ -52,10 +67,9 @@ if errorlevel 1 (
     if errorlevel 1 (
         echo.
         echo *** PUSH FAILED ***
-        echo This may be because the remote has commits you don't have locally.
-        echo Open a new terminal in this folder and run:
-        echo     git pull origin main --rebase
-        echo Then re-run this batch file.
+        echo Check that the remote URL above points to a repo that actually exists on GitHub.
+        echo You can fix it manually with:
+        echo     git remote set-url origin https://github.com/USER/REPO.git
         pause
         exit /b 1
     )
