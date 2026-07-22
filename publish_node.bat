@@ -190,9 +190,9 @@ echo Current PublisherId in pyproject.toml:
 findstr /i "PublisherId" pyproject.toml
 echo.
 
-:: ---- Step 5: Actual publish (pass the key directly, skip interactive re-prompt) ----
+:: ---- Step 5: Actual publish (use --token so the CLI never re-prompts) ----
 echo [Step 5] Publishing node to registry.comfy.org...
-comfy node publish --api-key "!COMFY_API_KEY!"
+comfy node publish --token "!COMFY_API_KEY!"
 
 echo.
 echo ============================================
