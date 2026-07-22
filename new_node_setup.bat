@@ -9,31 +9,116 @@ echo ============================================
 echo.
 
 if not exist "nodes.py" (
-    echo 경고: nodes.py가 이 폴더에 없습니다. 먼저 노드 코드를 만들어두세요.
+    echo WARNING: nodes.py was not found in this folder. Please create your node code first.
     pause
 )
 if not exist "__init__.py" (
-    echo 경고: __init__.py가 이 폴더에 없습니다. 먼저 노드 코드를 만들어두세요.
+    echo WARNING: __init__.py was not found in this folder. Please create your node code first.
     pause
 )
+if not exist "extract_defaults.ps1" (
+    echo ERROR: extract_defaults.ps1 was not found in this folder.
+    echo Please place it next to this .bat file and try again.
+    pause
+    exit /b 1
+)
 
-echo [입력 1] 노드 패키지 이름 (예: my-cool-node, 소문자/하이픈만)
-set /p PKGNAME="=== 여기만 타이핑 ==="
+echo ============================================
+echo   First, create an empty repository on GitHub:
+echo   https://github.com/new
+echo   (Do NOT check README/License/.gitignore. Leave it empty.)
+echo   Then paste the repository URL below.
+echo ============================================
+echo.
+echo [Input] Paste the repository URL here
+echo         (e.g. https://github.com/comal0731/comal-clipboard-bridge
+echo          or with /tree/main, .git, trailing slash, etc. - all fine)
+set /p REPOURL=URL: 
 
-echo [입력 2] 한 줄 설명
-set /p PKGDESC="=== 여기만 타이핑 ==="
+if "!REPOURL!"=="" (
+    echo ERROR: No URL entered. Aborting.
+    pause
+    exit /b 1
+)
 
-echo [입력 3] GitHub 저장소 이름 (예: my-cool-node)
-set /p REPONAME="=== 여기만 타이핑 ==="
+REM ---- Parse GITHUBUSER and REPONAME out of the pasted URL ----
+set "PARSEURL=!REPOURL!"
+set "PARSEURL=!PARSEURL:https://=!"
+set "PARSEURL=!PARSEURL:http://=!"
+set "PARSEURL=!PARSEURL:github.com/=!"
 
-echo [입력 4] 표시될 노드 이름 (DisplayName)
-set /p DISPNAME="=== 여기만 타이핑 ==="
+for /f "tokens=1,2 delims=/" %%A in ("!PARSEURL!") do (
+    set "GITHUBUSER=%%A"
+    set "REPONAME=%%B"
+)
+set "REPONAME=!REPONAME:.git=!"
 
-REM ---- Publisher는 기존에 만든 "comal" 재사용 (바꿀 필요 있을 때만 수정) ----
-set PUBLISHERID=comal
-set GITHUBUSER=comal0731
+if "!GITHUBUSER!"=="" (
+    echo ERROR: Could not parse GitHub username from the URL. Aborting.
+    pause
+    exit /b 1
+)
+if "!REPONAME!"=="" (
+    echo ERROR: Could not parse repository name from the URL. Aborting.
+    pause
+    exit /b 1
+)
 
-REM ---- pyproject.toml 생성 ----
+echo.
+echo   Parsed -^> User: !GITHUBUSER!  /  Repo: !REPONAME!
+echo.
+
+REM ---- Call the external PS1 helper to derive defaults (no inline PowerShell here) ----
+set "DEFAULT_PKGNAME="
+set "DEFAULT_DISPNAME="
+set "DEFAULT_DESC="
+
+for /f "usebackq delims=" %%L in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0extract_defaults.ps1" -RepoName "!REPONAME!" -NodesPath "%cd%\nodes.py"`) do (
+    set "LINE=%%L"
+    if "!LINE:~0,8!"=="PKGNAME=" set "DEFAULT_PKGNAME=!LINE:~8!"
+    if "!LINE:~0,9!"=="DISPNAME=" set "DEFAULT_DISPNAME=!LINE:~9!"
+    if "!LINE:~0,5!"=="DESC=" set "DEFAULT_DESC=!LINE:~5!"
+)
+
+echo [Input 1] Node package name
+echo           Detected default: !DEFAULT_PKGNAME!
+set /p PKGNAME=Press Enter to accept, or type a new name: 
+if "!PKGNAME!"=="" set "PKGNAME=!DEFAULT_PKGNAME!"
+
+echo.
+echo [Input 2] One-line description
+echo           Detected default: !DEFAULT_DESC!
+set /p PKGDESC=Press Enter to accept, or type a new description: 
+if "!PKGDESC!"=="" set "PKGDESC=!DEFAULT_DESC!"
+
+echo.
+echo [Input 3] Display name for the node
+echo           Detected default: !DEFAULT_DISPNAME!
+set /p DISPNAME=Press Enter to accept, or type a new name: 
+if "!DISPNAME!"=="" set "DISPNAME=!DEFAULT_DISPNAME!"
+
+if "!PKGNAME!"=="" (
+    echo ERROR: Package name is empty. Aborting.
+    pause
+    exit /b 1
+)
+if "!DISPNAME!"=="" (
+    echo ERROR: Display name is empty. Aborting.
+    pause
+    exit /b 1
+)
+
+echo.
+echo ============================================
+echo   Final values:
+echo   Package name : !PKGNAME!
+echo   Description  : !PKGDESC!
+echo   Display name : !DISPNAME!
+echo   GitHub repo  : https://github.com/!GITHUBUSER!/!REPONAME!
+echo ============================================
+pause
+
+REM ---- Generate pyproject.toml ----
 (
 echo [project]
 echo name = "!PKGNAME!"
@@ -45,21 +130,26 @@ echo [project.urls]
 echo Repository = "https://github.com/!GITHUBUSER!/!REPONAME!"
 echo.
 echo [tool.comfy]
-echo PublisherId = "!PUBLISHERID!"
+echo PublisherId = "comal"
 echo DisplayName = "!DISPNAME!"
 echo Icon = ""
 ) > pyproject.toml
-echo pyproject.toml 생성 완료.
+echo pyproject.toml created.
 
-REM ---- .gitignore 생성 ----
+REM ---- Generate .gitignore ----
 (
 echo __pycache__/
 echo *.pyc
 echo apikey.txt
+echo new_node_setup.bat
+echo publish_node.bat
+echo bump_version.ps1
+echo extract_defaults.ps1
 ) > .gitignore
-echo .gitignore 생성 완료.
+echo .gitignore created.
 
-REM ---- LICENSE 생성 (MIT) ----
+
+REM ---- Generate LICENSE (MIT) ----
 (
 echo MIT License
 echo.
@@ -83,14 +173,12 @@ echo LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FRO
 echo OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 echo SOFTWARE.
 ) > LICENSE
-echo LICENSE 생성 완료.
+echo LICENSE created.
 
 echo.
 echo ============================================
-echo   이제 GitHub에서 아래 순서를 진행하세요:
-echo   1. https://github.com/new 에서 저장소 이름 "!REPONAME!"으로 새 저장소 생성
-echo      (README/License 등 아무것도 체크하지 말고 빈 저장소로 생성)
-echo   2. 아래 git 명령이 자동 실행됩니다 (Enter만 누르면 진행)
+echo   Pushing to: https://github.com/!GITHUBUSER!/!REPONAME!.git
+echo   Press Enter to continue, or Ctrl+C to cancel.
 echo ============================================
 pause
 
@@ -103,8 +191,8 @@ git push -u origin main
 
 echo.
 echo ============================================
-echo   초기 설정 완료!
-echo   이제부터는 publish_node.bat 파일을
-echo   이 폴더에 복사해서 사용하시면 됩니다.
+echo   Initial setup complete!
+echo   From now on, just copy publish_node.bat
+echo   into this folder and use it.
 echo ============================================
 pause

@@ -1,13 +1,13 @@
 [project]
-name = ""
-description = ""
+name = "comal-node-clipboard-bridge"
+description = "This node automatically pastes copied images and text."
 version = "1.0.0"
 license = { file = "LICENSE" }
 
 [project.urls]
-Repository = "https://github.com/comal0731/"
+Repository = "https://github.com/comal0731/comal-node_clipboard-bridge"
 
 [tool.comfy]
 PublisherId = "comal"
-DisplayName = ""
+DisplayName = "Comal Clipboard Bridge"
 Icon = ""

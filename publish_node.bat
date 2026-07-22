@@ -3,108 +3,95 @@ setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 echo ============================================
-echo   New Comal-style Node - Initial Setup
+echo   Comal Node Publisher
 echo   Folder: %cd%
 echo ============================================
 echo.
 
-if not exist "nodes.py" (
-    echo WARNING: nodes.py was not found in this folder. Please create your node code first.
-    pause
-)
-if not exist "__init__.py" (
-    echo WARNING: __init__.py was not found in this folder. Please create your node code first.
-    pause
+:: ---- Step 0: apikey.txt를 .gitignore에 자동 등록 (실수로 커밋되는 것 방지) ----
+findstr /x "apikey.txt" .gitignore >nul 2>&1
+if errorlevel 1 (
+    echo apikey.txt>> .gitignore
+    echo (.gitignore에 apikey.txt 추가함 - API 키가 절대 커밋되지 않도록 보호)
 )
 
-echo [Input 1] Node package name (e.g. my-cool-node, lowercase/hyphens only)
-set /p PKGNAME="=== Type here ==="
-
-echo [Input 2] One-line description
-set /p PKGDESC="=== Type here ==="
-
-echo [Input 3] GitHub repository name (e.g. my-cool-node)
-set /p REPONAME="=== Type here ==="
-
-echo [Input 4] Display name for the node
-set /p DISPNAME="=== Type here ==="
-
-REM ---- Reuse the existing "comal" publisher (only edit if you need to change it) ----
-set PUBLISHERID=comal
-set GITHUBUSER=comal0731
-
-REM ---- Generate pyproject.toml ----
-(
-echo [project]
-echo name = "!PKGNAME!"
-echo description = "!PKGDESC!"
-echo version = "1.0.0"
-echo license = { file = "LICENSE" }
+:: ---- Step 1: 변경사항 확인 및 커밋 ----
+echo [Step 1] 현재 변경된 파일 목록:
+git status --short
 echo.
-echo [project.urls]
-echo Repository = "https://github.com/!GITHUBUSER!/!REPONAME!"
+set /p DOCOMMIT="변경사항을 지금 커밋할까요? (y/n): "
+if /i "%DOCOMMIT%"=="y" (
+    set /p COMMITMSG="=== 커밋 메시지를 입력하세요 (여기만 타이핑) ==="
+    git add .
+    git commit -m "!COMMITMSG!"
+    echo 커밋 완료.
+) else (
+    echo 커밋 단계 건너뜀.
+)
 echo.
-echo [tool.comfy]
-echo PublisherId = "!PUBLISHERID!"
-echo DisplayName = "!DISPNAME!"
-echo Icon = ""
-) > pyproject.toml
-echo pyproject.toml created.
 
-REM ---- Generate .gitignore ----
-(
-echo __pycache__/
-echo *.pyc
-echo apikey.txt
-) > .gitignore
-echo .gitignore created.
+:: ---- Step 2: 버전 올리기 ----
+echo [Step 2] pyproject.toml 버전 자동 증가
+set /p DOBUMP="버전을 올릴까요? (patch +1) (y/n): "
+if /i "%DOBUMP%"=="y" (
+    for /f "delims=" %%A in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0bump_version.ps1"') do set VERLINE=%%A
+    echo 버전 변경: !VERLINE!
+    git add pyproject.toml
+    git commit -m "bump version !VERLINE!"
+) else (
+    echo 버전 올리기 건너뜀 - 이미 새 버전이면 그대로 진행합니다.
+)
+echo.
 
-REM ---- Generate LICENSE (MIT) ----
-(
-echo MIT License
+:: ---- Step 3: GitHub push ----
+echo [Step 3] GitHub로 push 중...
+git push
+if errorlevel 1 (
+    echo.
+    echo !!! PUSH 실패 !!!
+    echo 아래 명령을 직접 실행한 뒤 이 배치파일을 다시 실행하세요:
+    echo     git pull origin main
+    pause
+    exit /b 1
+)
+echo push 완료.
 echo.
-echo Copyright ^(c^) 2026 !GITHUBUSER!
-echo.
-echo Permission is hereby granted, free of charge, to any person obtaining a copy
-echo of this software and associated documentation files ^(the "Software"^), to deal
-echo in the Software without restriction, including without limitation the rights
-echo to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-echo copies of the Software, and to permit persons to whom the Software is
-echo furnished to do so, subject to the following conditions:
-echo.
-echo The above copyright notice and this permission notice shall be included in all
-echo copies or substantial portions of the Software.
-echo.
-echo THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-echo IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-echo FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-echo AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-echo LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-echo OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-echo SOFTWARE.
-) > LICENSE
-echo LICENSE created.
 
+:: ---- Step 4: API 키 준비 ----
+echo [Step 4] Comfy Registry API 키
 echo.
-echo ============================================
-echo   Now go to GitHub and follow these steps:
-echo   1. Go to https://github.com/new and create a new repository named "!REPONAME!"
-echo      (Do NOT check README/License etc. Create it as an empty repository.)
-echo   2. The git commands below will run automatically (just press Enter to continue)
-echo ============================================
-pause
+echo   키가 없다면 아래 순서로 새로 만드세요:
+echo   1. https://registry.comfy.org/nodes 접속 (로그인 필요)
+echo   2. 목록에서 "comal" Publisher 클릭
+echo   3. "+ Create new key" 버튼 클릭 후 이름 입력, 발급된 키 즉시 복사
+echo      (키는 그 순간에만 표시되며, 다시 볼 수 없습니다)
+echo.
+set KEYFILE=%~dp0apikey.txt
+if exist "%KEYFILE%" (
+    set /p USEEXISTING="저장된 API 키가 있습니다. 그걸 쓸까요? (y/n): "
+) else (
+    set USEEXISTING=n
+)
 
-git init
-git add .
-git commit -m "initial commit"
-git branch -M main
-git remote add origin https://github.com/!GITHUBUSER!/!REPONAME!.git
-git push -u origin main
+if /i "!USEEXISTING!"=="y" (
+    set /p COMFY_API_KEY=<"%KEYFILE%"
+) else (
+    set /p COMFY_API_KEY="=== 위 링크에서 발급받은 API 키를 붙여넣으세요 (여기만 타이핑) ==="
+    set /p SAVEKEY="다음에 다시 안 치도록 로컬에 저장할까요? (y/n): "
+    if /i "!SAVEKEY!"=="y" (
+        echo !COMFY_API_KEY!> "%KEYFILE%"
+        echo 저장 완료: %KEYFILE%  ^(.gitignore로 보호되어 있어 커밋되지 않습니다^)
+    )
+)
+echo.
+
+
+:: ---- Step 5: 실제 publish ----
+echo [Step 5] registry.comfy.org로 노드 publish 중...
+comfy node publish
 
 echo.
 echo ============================================
-echo   Initial setup complete!
-echo   From now on, just copy publish_node.bat
-echo   into this folder and use it.
+echo   완료. 위 메시지에서 성공/에러 여부를 확인하세요.
 echo ============================================
 pause

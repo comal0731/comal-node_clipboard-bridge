@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 apikey.txt
+new_node_setup.bat
+publish_node.bat
+bump_version.ps1
+extract_defaults.ps1
