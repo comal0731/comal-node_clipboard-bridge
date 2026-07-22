@@ -103,18 +103,19 @@ if errorlevel 1 (
     git push --set-upstream origin main
     if errorlevel 1 (
         echo.
-        echo The remote repository already has some content that your
-        echo local folder does not have (e.g. a README/License created on GitHub).
+        echo The remote repository may already have content your local folder
+        echo does not have, such as a README or License created on GitHub.
         echo Attempting to automatically merge it in...
         git pull origin main --allow-unrelated-histories --no-edit
         if errorlevel 1 (
             echo.
             echo *** MERGE FAILED - there are conflicting files. ***
-            echo Open the files git lists above, resolve the conflict markers
-            echo ^(lines starting with ^<^<^<^<^<^<^<, =======, ^>^>^>^>^>^>^>^),
+            echo Open the conflicting file listed above in a text editor.
+            echo Look for the conflict markers inside it, decide which
+            echo version of the content to keep, delete the marker lines,
             echo then run:
             echo     git add .
-            echo     git commit -m "merge"
+            echo     git commit -m merge
             echo and re-run this batch file.
             pause
             exit /b 1
@@ -146,7 +147,7 @@ echo      (the key is shown only once and cannot be viewed again)
 echo.
 echo   IMPORTANT: Do NOT paste with Ctrl+V. Right-click to paste instead,
 echo   otherwise Windows may silently add a hidden control character
-echo   to the end of the key and cause "Invalid personal access token".
+echo   to the end of the key and cause an authentication error.
 echo.
 set "KEYFILE=%~dp0apikey.txt"
 if exist "%KEYFILE%" (
@@ -166,7 +167,7 @@ if /i "!USEEXISTING!"=="y" (
     )
 )
 
-:: ---- Clean the key: strip whitespace, CR/LF, and the Windows SYN (0x16) artifact ----
+:: ---- Clean the key: strip whitespace and the Windows SYN (0x16) artifact ----
 set "CLEANKEY="
 for /f "usebackq delims=" %%K in (`powershell -NoProfile -Command "$k = '!COMFY_API_KEY!'; $k = $k -replace [char]0x16,''; $k.Trim()"`) do set "CLEANKEY=%%K"
 set "COMFY_API_KEY=!CLEANKEY!"
