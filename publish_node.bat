@@ -103,12 +103,33 @@ if errorlevel 1 (
     git push --set-upstream origin main
     if errorlevel 1 (
         echo.
-        echo *** PUSH FAILED ***
-        echo Check that the remote URL above points to a repo that actually exists on GitHub.
-        echo You can fix it manually with:
-        echo     git remote set-url origin https://github.com/USER/REPO.git
-        pause
-        exit /b 1
+        echo The remote repository already has some content that your
+        echo local folder does not have (e.g. a README/License created on GitHub).
+        echo Attempting to automatically merge it in...
+        git pull origin main --allow-unrelated-histories --no-edit
+        if errorlevel 1 (
+            echo.
+            echo *** MERGE FAILED - there are conflicting files. ***
+            echo Open the files git lists above, resolve the conflict markers
+            echo ^(lines starting with ^<^<^<^<^<^<^<, =======, ^>^>^>^>^>^>^>^),
+            echo then run:
+            echo     git add .
+            echo     git commit -m "merge"
+            echo and re-run this batch file.
+            pause
+            exit /b 1
+        )
+        echo Merge succeeded. Retrying push...
+        git push --set-upstream origin main
+        if errorlevel 1 (
+            echo.
+            echo *** PUSH STILL FAILED ***
+            echo If you are SURE the remote repo has nothing important,
+            echo you can overwrite it with:
+            echo     git push --force --set-upstream origin main
+            pause
+            exit /b 1
+        )
     )
 )
 echo Push complete.
@@ -119,9 +140,13 @@ echo [Step 4] Comfy Registry API key
 echo.
 echo   If you don't have a key yet, create one as follows:
 echo   1. Go to https://registry.comfy.org/nodes (login required)
-echo   2. Click the "comal" Publisher in the list
+echo   2. Click your Publisher in the list
 echo   3. Click "+ Create new key", enter a name, and copy the key immediately
 echo      (the key is shown only once and cannot be viewed again)
+echo.
+echo   IMPORTANT: Do NOT paste with Ctrl+V. Right-click to paste instead,
+echo   otherwise Windows may silently add a hidden control character
+echo   to the end of the key and cause "Invalid personal access token".
 echo.
 set "KEYFILE=%~dp0apikey.txt"
 if exist "%KEYFILE%" (
@@ -133,18 +158,41 @@ if exist "%KEYFILE%" (
 if /i "!USEEXISTING!"=="y" (
     set /p COMFY_API_KEY=<"%KEYFILE%"
 ) else (
-    set /p COMFY_API_KEY="Paste the API key from the link above: "
+    set /p COMFY_API_KEY="Right-click to paste the API key here: "
     set /p SAVEKEY="Save it locally so you don't need to type it again? (y/n): "
     if /i "!SAVEKEY!"=="y" (
         echo !COMFY_API_KEY!> "%KEYFILE%"
         echo Saved: %KEYFILE% - protected by .gitignore, will not be committed
     )
 )
+
+:: ---- Clean the key: strip whitespace, CR/LF, and the Windows SYN (0x16) artifact ----
+set "CLEANKEY="
+for /f "usebackq delims=" %%K in (`powershell -NoProfile -Command "$k = '!COMFY_API_KEY!'; $k = $k -replace [char]0x16,''; $k.Trim()"`) do set "CLEANKEY=%%K"
+set "COMFY_API_KEY=!CLEANKEY!"
+
+:: ---- Sanity check: show key length ----
+set "KEYLEN=0"
+set "TMPKEY=!COMFY_API_KEY!"
+:countloop
+if not "!TMPKEY!"=="" (
+    set /a KEYLEN+=1
+    set "TMPKEY=!TMPKEY:~1!"
+    goto countloop
+)
+echo Loaded API key length after cleanup: !KEYLEN! characters
+if !KEYLEN! LSS 10 (
+    echo *** WARNING: The key looks too short. It may be empty or corrupted. ***
+)
 echo.
 
-:: ---- Step 5: Actual publish ----
+echo Current PublisherId in pyproject.toml:
+findstr /i "PublisherId" pyproject.toml
+echo.
+
+:: ---- Step 5: Actual publish (pass the key directly, skip interactive re-prompt) ----
 echo [Step 5] Publishing node to registry.comfy.org...
-comfy node publish
+comfy node publish --api-key "!COMFY_API_KEY!"
 
 echo.
 echo ============================================
