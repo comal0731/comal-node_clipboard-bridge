@@ -58,12 +58,11 @@ echo [Step 3] Checking remote origin URL...
 set "CURRENT_REMOTE="
 for /f "usebackq delims=" %%U in (`git remote get-url origin 2^>nul`) do set "CURRENT_REMOTE=%%U"
 
+set "NEED_FIX=0"
+
 if "!CURRENT_REMOTE!"=="" (
-    echo *** WARNING: No "origin" remote is configured. ***
-    set /p FIXURL="Paste the correct GitHub repo URL (e.g. https://github.com/USER/REPO): "
-    if not "!FIXURL!"=="" (
-        git remote add origin "!FIXURL!"
-    )
+    echo *** WARNING: No "origin" remote is configured at all. ***
+    set "NEED_FIX=1"
 ) else (
     echo Current remote: !CURRENT_REMOTE!
     set "CHECKURL=!CURRENT_REMOTE!"
@@ -75,14 +74,24 @@ if "!CURRENT_REMOTE!"=="" (
         set "CHK_USER=%%A"
         set "CHK_REPO=%%B"
     )
-    if "!CHK_REPO!"=="" (
-        echo *** WARNING: origin URL looks malformed - missing repository name. ***
-        echo Current value: !CURRENT_REMOTE!
-        set /p FIXURL="Paste the correct GitHub repo URL to fix it (or press Enter to skip): "
-        if not "!FIXURL!"=="" (
-            git remote set-url origin "!FIXURL!"
-            echo Remote URL updated.
-        )
+    if "!CHK_REPO!"=="" set "NEED_FIX=1"
+    if "!CHK_REPO:~0,1!"=="." set "NEED_FIX=1"
+)
+
+if "!NEED_FIX!"=="1" (
+    echo.
+    echo *** The saved GitHub address is missing the repository name. ***
+    echo Go to your GitHub profile, find the correct repository, copy its URL,
+    echo and paste it below.
+    set /p FIXURL="Correct GitHub repo URL: "
+    if not "!FIXURL!"=="" (
+        git remote remove origin >nul 2>&1
+        git remote add origin "!FIXURL!"
+        echo Remote URL set to: !FIXURL!
+    ) else (
+        echo No URL entered. Cannot continue.
+        pause
+        exit /b 1
     )
 )
 echo.
