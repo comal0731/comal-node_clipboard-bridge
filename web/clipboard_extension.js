@@ -4,8 +4,11 @@ import { api } from "../../scripts/api.js";
 const MAX_TEXT_HISTORY = 10;
 const MAX_IMAGE_HISTORY = 5;
 const CHECK_INTERVAL_MS = 10000;
+const INTERNAL_COPY_WINDOW_MS = 2000;
 
 let lastActivityTime = Date.now();
+let lastInternalTextCopyTime = 0;
+let lastInternalImageCopyTime = 0;
 
 function findNodesByType(type) {
     return app.graph._nodes.filter((n) => n.type === type);
@@ -28,7 +31,11 @@ function addDualButtonWidget(node, leftText, rightText, onLeft, onRight) {
         draw(ctx, node, widgetWidth, y, widgetHeight) {
             const margin = 10;
             const gap = 6;
-            const halfWidth = (widgetWidth - margin * 2 - gap) / 2;
+            // ComfyUI can pass a stale computed widget width after selecting a
+            // node. Always lay the row out from the node's current visual width
+            // so the buttons cannot grow past its right edge.
+            const liveWidth = Math.max(80, Number(node.size?.[0]) || widgetWidth || 80);
+            const halfWidth = Math.max(20, (liveWidth - margin * 2 - gap) / 2);
             const height = widgetHeight || 20;
 
             ctx.fillStyle = "#353535";
@@ -72,8 +79,13 @@ function addDualButtonWidget(node, leftText, rightText, onLeft, onRight) {
             }
             return false;
         },
-        computeSize(width) {
-            return [width, 24];
+        computeSize() {
+            // Returning the current node width here makes LiteGraph feed that
+            // width back into the node's minimum size.  The surrounding widget
+            // margins are then added again on every workflow reload, so the
+            // Undo/Redo row (and eventually the node) keeps growing.
+            // The buttons already use the live width passed to draw().
+            return [0, 24];
         },
     };
     node.widgets = node.widgets || [];
@@ -81,18 +93,67 @@ function addDualButtonWidget(node, leftText, rightText, onLeft, onRight) {
     return widget;
 }
 
-function getSafetySettings() {
+function getGlobalSettings() {
     const nodes = findNodesByType("ClipboardSafetyOptions");
     if (nodes.length === 0) {
-        return { resetOnReload: true, autoOffMinutes: 30 };
+        return {
+            resetOnReload: true,
+            autoOffMinutes: 30,
+            acceptInternalText: false,
+            acceptInternalImage: false,
+            focusOnText: false,
+            focusOnImage: false,
+        };
     }
     const node = nodes[0];
-    const resetWidget = node.widgets?.find((w) => w.name === "reset_on_reload");
-    const minutesWidget = node.widgets?.find((w) => w.name === "auto_off_minutes");
+    const resetWidget = node.widgets?.find((w) => w.name === "reset_listen");
+    const minutesWidget = node.widgets?.find((w) => w.name === "idle_off_minutes");
+    const internalTextWidget = node.widgets?.find((w) => w.name === "allow_comfy_text");
+    const internalImageWidget = node.widgets?.find((w) => w.name === "allow_comfy_image");
+    const focusTextWidget = node.widgets?.find((w) => w.name === "focus_text_tab");
+    const focusImageWidget = node.widgets?.find((w) => w.name === "focus_image_tab");
     return {
         resetOnReload: resetWidget ? resetWidget.value : true,
         autoOffMinutes: minutesWidget ? minutesWidget.value : 30,
+        acceptInternalText: internalTextWidget ? internalTextWidget.value : false,
+        acceptInternalImage: internalImageWidget ? internalImageWidget.value : false,
+        focusOnText: focusTextWidget ? focusTextWidget.value : false,
+        focusOnImage: focusImageWidget ? focusImageWidget.value : false,
     };
+}
+
+function markInternalCopy(event) {
+    const now = Date.now();
+    const types = Array.from(event.clipboardData?.types || []);
+    const hasImage = types.some((type) => type.startsWith("image/"));
+    const hasText = types.some((type) => type.startsWith("text/"));
+
+    // Some browser/native copy commands do not expose their MIME type to the
+    // page. Mark both in that case so an internal copy cannot leak through.
+    if (hasText || !hasImage) lastInternalTextCopyTime = now;
+    if (hasImage || !hasText) lastInternalImageCopyTime = now;
+}
+
+function markInternalCopyShortcut(event) {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key?.toLowerCase() !== "c") return;
+    // LiteGraph may consume Ctrl/Cmd+C before the browser dispatches a copy
+    // event (for example when copying nodes), so cover that path as unknown.
+    const now = Date.now();
+    lastInternalTextCopyTime = now;
+    lastInternalImageCopyTime = now;
+}
+
+function isRecentInternalCopy(kind) {
+    const copiedAt = kind === "text" ? lastInternalTextCopyTime : lastInternalImageCopyTime;
+    return Date.now() - copiedAt <= INTERNAL_COPY_WINDOW_MS;
+}
+
+function requestComfyTabFocus() {
+    // Browsers may reject background-tab activation without a user gesture.
+    // This is the strongest standards-based request available to a web
+    // extension running inside the ComfyUI page.
+    window.focus();
+    app.canvas?.canvas?.focus?.({ preventScroll: true });
 }
 
 function turnOffAllListen() {
@@ -108,7 +169,7 @@ function turnOffAllListen() {
 }
 
 function forceListenOffIfNeeded(node) {
-    const { resetOnReload } = getSafetySettings();
+    const { resetOnReload } = getGlobalSettings();
     if (!resetOnReload) return;
     const listenWidget = node.widgets?.find((w) => w.name === "listen");
     if (listenWidget) listenWidget.value = false;
@@ -137,6 +198,7 @@ function pushHistory(node, value, maxLen) {
     }
     histWidget.value = JSON.stringify(history);
     idxWidget.value = history.length - 1;
+    node.graph?.change?.();
 }
 
 function moveHistory(node, delta, applyFn) {
@@ -157,7 +219,12 @@ function moveHistory(node, delta, applyFn) {
 
 function applyImageToNode(node, subpath) {
     const pathWidget = node.widgets?.find((w) => w.name === "image_path");
-    if (pathWidget) pathWidget.value = subpath;
+    if (pathWidget && pathWidget.value !== subpath) {
+        pathWidget.value = subpath;
+        pathWidget.callback?.(subpath, app.canvas, node, [0, 0]);
+        // Make ComfyUI record the hidden path widget as a workflow change.
+        node.graph?.change?.();
+    }
 
     let subfolder = "";
     let filename = subpath;
@@ -171,7 +238,8 @@ function applyImageToNode(node, subpath) {
     img.src = `/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=input&t=${Date.now()}`;
     img.onload = () => {
         node.imgs = [img];
-        node.setSizeForImage?.();
+        // Keep the size chosen by the user. setSizeForImage() recalculates and
+        // overwrites it each time the workflow/image is restored.
         app.canvas.setDirty(true, true);
     };
 }
@@ -195,11 +263,6 @@ app.registerExtension({
             const onNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function () {
                 onNodeCreated?.apply(this, arguments);
-
-                requestAnimationFrame(() => {
-                    this.setSize([300, 420]);
-                    app.canvas.setDirty(true, true);
-                });
 
                 hideWidget(this.widgets?.find((w) => w.name === "image_path"));
                 hideWidget(this.widgets?.find((w) => w.name === "history_json"));
@@ -278,6 +341,9 @@ app.registerExtension({
     },
 
     async setup() {
+        document.addEventListener("copy", markInternalCopy, true);
+        document.addEventListener("keydown", markInternalCopyShortcut, true);
+
         ["mousemove", "mousedown", "keydown", "wheel", "touchstart"].forEach((evt) => {
             document.addEventListener(
                 evt,
@@ -289,7 +355,7 @@ app.registerExtension({
         });
 
         setInterval(() => {
-            const { autoOffMinutes } = getSafetySettings();
+            const { autoOffMinutes } = getGlobalSettings();
             if (!autoOffMinutes || autoOffMinutes <= 0) return;
             const elapsedMs = Date.now() - lastActivityTime;
             if (elapsedMs >= autoOffMinutes * 60 * 1000) {
@@ -298,8 +364,12 @@ app.registerExtension({
         }, CHECK_INTERVAL_MS);
 
         api.addEventListener("clipboard.text", (event) => {
+            const { acceptInternalText, focusOnText } = getGlobalSettings();
+            if (!acceptInternalText && isRecentInternalCopy("text")) return;
+
             const newText = event.detail.text;
             const receivers = findNodesByType("ClipboardTextReceiver");
+            let delivered = false;
             receivers.forEach((node) => {
                 const textWidget = node.widgets?.find((w) => w.name === "current_text");
                 if (!textWidget) return;
@@ -339,14 +409,20 @@ app.registerExtension({
 
                 pushHistory(node, result, MAX_TEXT_HISTORY);
                 textWidget.value = result;
+                delivered = true;
             });
+            if (delivered && focusOnText) requestComfyTabFocus();
             app.canvas.setDirty(true, true);
         });
 
         api.addEventListener("clipboard.image", (event) => {
+            const { acceptInternalImage, focusOnImage } = getGlobalSettings();
+            if (!acceptInternalImage && isRecentInternalCopy("image")) return;
+
             const filename = event.detail.filename;
             const subpath = `clipboard/${filename}`;
             const bridges = findNodesByType("ClipboardImageBridge");
+            let delivered = false;
             bridges.forEach((node) => {
                 const listenWidget = node.widgets?.find((w) => w.name === "listen");
                 const isListening = listenWidget ? listenWidget.value : false;
@@ -354,7 +430,9 @@ app.registerExtension({
 
                 pushHistory(node, subpath, MAX_IMAGE_HISTORY);
                 applyImageToNode(node, subpath);
+                delivered = true;
             });
+            if (delivered && focusOnImage) requestComfyTabFocus();
         });
     },
 });

@@ -4,7 +4,6 @@ import io
 import os
 import sys
 import hashlib
-from collections import deque
 from PIL import ImageGrab
 import pyperclip
 from server import PromptServer
@@ -18,10 +17,6 @@ _last_text_hash = None
 _last_image_hash = None
 _last_image_filename = None
 _last_seq = None
-
-# 최근 5개까지만 이미지 파일을 남기고, 그 외 오래된 clip_*.png는 자동 삭제
-_kept_image_files = deque(maxlen=5)
-
 
 def _get_clipboard_sequence():
     if sys.platform == "win32":
@@ -85,21 +80,7 @@ class ClipboardWatcher(threading.Thread):
         filepath = os.path.join(self.save_dir, filename)
         with open(filepath, "wb") as f:
             f.write(data)
-        _kept_image_files.append(filename)
-        self._cleanup_old_images()
         return filename
-
-    def _cleanup_old_images(self):
-        keep = set(_kept_image_files)
-        try:
-            for fname in os.listdir(self.save_dir):
-                if fname.startswith("clip_") and fname.endswith(".png") and fname not in keep:
-                    try:
-                        os.remove(os.path.join(self.save_dir, fname))
-                    except Exception:
-                        pass
-        except Exception:
-            pass
 
     def _check_image(self, force=False):
         global _last_image_hash, _last_image_filename, LATEST_CLIPBOARD_IMAGE_PATH

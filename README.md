@@ -8,7 +8,7 @@ ComfyUI 캔버스에서 클립보드(복사한 텍스트/이미지)를 자동으
 - **텍스트 처리 옵션**: `Clipboard Text Options` 노드로 Append(뒤에 이어붙이기), Replace(교체), Fixed+New(고정 문구 + 새 텍스트) 방식을 선택하고 구분자(separator)도 지정할 수 있습니다.
 - **Undo / Redo 히스토리**: 텍스트는 최근 10개, 이미지는 최근 5개까지 저장되며 노드에 있는 Undo / Redo 버튼으로 과거 클립보드 내용을 다시 불러올 수 있습니다.
 - **개별 ON/OFF 스위치**: 각 노드마다 `listen` 스위치가 있어 원하는 노드만 클립보드를 감지하도록 켜고 끌 수 있습니다.
-- **안전장치(Clipboard Safety Options)**: ComfyUI를 새로고침하거나 재시작하면 모든 listen 스위치가 자동으로 꺼지고, 마우스/키보드 활동이 일정 시간(기본 30분) 없으면 자동으로 모든 listen 스위치가 꺼집니다. 이 노드를 캔버스에 연결하지 않아도 전역으로 기본값이 적용됩니다.
+- **전역 설정(Clipboard Global Options)**: ComfyUI를 새로고침하거나 재시작하면 모든 listen 스위치가 자동으로 꺼지고, 마우스/키보드 활동이 일정 시간(기본 30분) 없으면 자동으로 모든 listen 스위치가 꺼집니다. ComfyUI 내부에서 복사한 텍스트와 이미지를 받을지, 수신 시 ComfyUI 탭에 포커스를 요청할지를 각각 설정할 수 있으며 기본값은 모두 OFF입니다. 이 노드를 캔버스에 연결하지 않아도 전역으로 기본값이 적용됩니다.
 - **이미지 드래그 앤 드롭**: 이미지를 노드 위로 드래그하면 자동으로 업로드되어 삽입됩니다.
 
 ## 노드 목록
@@ -16,7 +16,7 @@ ComfyUI 캔버스에서 클립보드(복사한 텍스트/이미지)를 자동으
 | 노드 이름 | 설명 |
 |---|---|
 | Clipboard Text Options | 텍스트 결합 방식(Append/Replace/Fixed+New)과 구분자, 고정 문구를 설정 |
-| Clipboard Safety Options | 재시작 시 자동 OFF, 비활동 자동 OFF(분 단위) 설정. 연결하지 않아도 기본값 적용됨 |
+| Clipboard Global Options | `reset_listen`, `idle_off_minutes`, ComfyUI 내부 복사 허용 및 수신 시 탭 포커스 요청을 텍스트/이미지별로 설정. 추가 스위치는 기본 OFF이며 연결하지 않아도 기본값 적용됨 |
 | Clipboard Text Receiver | 클립보드 텍스트를 받아 워크플로우에 전달, Undo/Redo 버튼 포함 |
 | Load Image (Clipboard) | 클립보드 이미지를 받아 워크플로우에 전달, Undo/Redo 버튼 및 드래그 앤 드롭 지원 |
 
@@ -47,9 +47,9 @@ Copypython main.py
 아무 텍스트나 이미지를 복사(Ctrl+C)하면 자동으로 노드에 입력됩니다.
 이전 클립보드 내용으로 되돌리고 싶다면 노드 안의 Undo / Redo 버튼을 사용합니다.
 여러 노드에서 동일한 텍스트 조합 규칙을 쓰고 싶다면 Clipboard Text Options 노드를 만들어 연결하세요.
-재시작 시 자동 OFF 여부나 비활동 자동 OFF 시간을 조정하려면 Clipboard Safety Options 노드를 캔버스에 추가하고 값을 설정하세요.
+재시작 시 자동 OFF 여부, 비활동 자동 OFF 시간, ComfyUI 내부 복사 허용 여부를 조정하려면 Clipboard Global Options 노드를 캔버스에 추가하고 값을 설정하세요.
 주의사항
-이미지 히스토리는 최근 5장, 텍스트 히스토리는 최근 10개까지만 저장되며 그 이상은 자동으로 삭제됩니다.
+노드의 Undo/Redo 히스토리는 이미지 최근 5장, 텍스트 최근 10개까지 유지됩니다. 워크플로가 참조하는 이미지 원본 파일은 새로고침이나 재시작 후에도 복원할 수 있도록 삭제하지 않습니다.
 안전을 위해 워크플로우를 새로 열거나 ComfyUI를 재시작하면 모든 listen 스위치는 기본적으로 꺼진 상태로 시작합니다.
 현재는 Windows 클립보드 API를 기준으로 구현되어 있어 macOS/Linux 환경에서는 일부 감지 기능이 정상 동작하지 않을 수 있습니다.
 라이선스

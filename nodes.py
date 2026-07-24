@@ -27,14 +27,46 @@ class ClipboardSafetyOptions:
     @classmethod
     def INPUT_TYPES(cls):
         return {"required": {
-                    "reset_on_reload": ("BOOLEAN", {"default": True, "label_on": "Reset ON", "label_off": "Reset OFF"}),
-                    "auto_off_minutes": ("INT", {"default": 30, "min": 0, "max": 999, "step": 1}),
+                    "reset_listen": ("BOOLEAN", {
+                        "default": True,
+                        "label_on": "Reset Listen ON",
+                        "label_off": "Reset Listen OFF",
+                    }),
+                    "idle_off_minutes": ("INT", {"default": 30, "min": 0, "max": 999, "step": 1}),
+                    "allow_comfy_text": ("BOOLEAN", {
+                        "default": False,
+                        "label_on": "Allow Comfy Text ON",
+                        "label_off": "Allow Comfy Text OFF",
+                    }),
+                    "allow_comfy_image": ("BOOLEAN", {
+                        "default": False,
+                        "label_on": "Allow Comfy Image ON",
+                        "label_off": "Allow Comfy Image OFF",
+                    }),
+                    "focus_text_tab": ("BOOLEAN", {
+                        "default": False,
+                        "label_on": "Focus Text Tab ON",
+                        "label_off": "Focus Text Tab OFF",
+                    }),
+                    "focus_image_tab": ("BOOLEAN", {
+                        "default": False,
+                        "label_on": "Focus Image Tab ON",
+                        "label_off": "Focus Image Tab OFF",
+                    }),
                 }}
     RETURN_TYPES = ()
     FUNCTION = "noop"
     CATEGORY = "clipboard_bridge"
 
-    def noop(self, reset_on_reload=True, auto_off_minutes=30):
+    def noop(
+        self,
+        reset_listen=True,
+        idle_off_minutes=30,
+        allow_comfy_text=False,
+        allow_comfy_image=False,
+        focus_text_tab=False,
+        focus_image_tab=False,
+    ):
         return ()
 
 
@@ -98,7 +130,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "ClipboardTextOptions": "Clipboard Text Options Comal",
-    "ClipboardSafetyOptions": "Clipboard Safety Options Comal",
+    "ClipboardSafetyOptions": "Clipboard Global Options Comal",
     "ClipboardTextReceiver": "Clipboard Text Receiver Comal",
     "ClipboardImageBridge": "Load Image Comal",
 }
