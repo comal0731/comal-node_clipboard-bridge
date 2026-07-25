@@ -96,15 +96,22 @@ class ClipboardImageBridge:
                     "image_path": ("STRING", {"default": ""}),
                     "history_json": ("STRING", {"default": "[]"}),
                     "history_index": ("INT", {"default": 0}),
+                },
+                "optional": {
+                    "image": ("STRING", {"default": ""}),
                 }}
     RETURN_TYPES = ("IMAGE", "MASK")
     FUNCTION = "load"
     CATEGORY = "clipboard_bridge"
 
-    def load(self, listen=False, image_path="", history_json="[]", history_index=0):
+    def load(self, listen=False, image_path="", history_json="[]", history_index=0, image=""):
         full_path = None
-        if image_path:
-            candidate = os.path.join(folder_paths.get_input_directory(), image_path)
+        selected_path = image or image_path
+        if selected_path:
+            try:
+                candidate = folder_paths.get_annotated_filepath(selected_path)
+            except Exception:
+                candidate = os.path.join(folder_paths.get_input_directory(), selected_path)
             if os.path.exists(candidate):
                 full_path = candidate
         if full_path is None and cw.LATEST_CLIPBOARD_IMAGE_PATH:
@@ -113,11 +120,16 @@ class ClipboardImageBridge:
         if full_path is None or not os.path.exists(full_path):
             img = Image.new("RGB", (512, 512), color=(0, 0, 0))
         else:
-            img = Image.open(full_path).convert("RGB")
+            img = Image.open(full_path)
 
-        arr = np.array(img).astype(np.float32) / 255.0
+        rgb = img.convert("RGB")
+        arr = np.array(rgb).astype(np.float32) / 255.0
         tensor = torch.from_numpy(arr)[None,]
-        mask = torch.zeros((1, img.height, img.width), dtype=torch.float32)
+        if "A" in img.getbands():
+            alpha = np.array(img.getchannel("A")).astype(np.float32) / 255.0
+            mask = (1.0 - torch.from_numpy(alpha))[None,]
+        else:
+            mask = torch.zeros((1, rgb.height, rgb.width), dtype=torch.float32)
         return (tensor, mask)
 
 

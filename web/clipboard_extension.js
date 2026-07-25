@@ -20,6 +20,13 @@ function hideWidget(widget) {
     widget.draw = () => {};
 }
 
+function syncMaskEditorImageWidget(node, subpath) {
+    const widget = node.widgets?.find((w) => w.name === "image");
+    if (!widget) return;
+    widget.value = subpath;
+    widget.callback?.(subpath, app.canvas, node, [0, 0]);
+}
+
 // 버튼 두 개를 한 줄에 나란히 그려주는 커스텀 위젯
 function addDualButtonWidget(node, leftText, rightText, onLeft, onRight) {
     const widget = {
@@ -225,17 +232,21 @@ function applyImageToNode(node, subpath) {
         // Make ComfyUI record the hidden path widget as a workflow change.
         node.graph?.change?.();
     }
+    syncMaskEditorImageWidget(node, subpath);
 
+    const annotation = subpath.match(/\s+\[(input|output|temp)\]$/i);
+    const imageType = annotation?.[1]?.toLowerCase() || "input";
+    const cleanSubpath = subpath.replace(/\s+\[(input|output|temp)\]$/i, "");
     let subfolder = "";
-    let filename = subpath;
-    if (subpath.includes("/")) {
-        const idx = subpath.indexOf("/");
-        subfolder = subpath.slice(0, idx);
-        filename = subpath.slice(idx + 1);
+    let filename = cleanSubpath;
+    if (cleanSubpath.includes("/")) {
+        const idx = cleanSubpath.lastIndexOf("/");
+        subfolder = cleanSubpath.slice(0, idx);
+        filename = cleanSubpath.slice(idx + 1);
     }
 
     const img = new Image();
-    img.src = `/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=input&t=${Date.now()}`;
+    img.src = `/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${encodeURIComponent(imageType)}&t=${Date.now()}`;
     img.onload = () => {
         node.imgs = [img];
         // Keep the size chosen by the user. setSizeForImage() recalculates and
@@ -255,6 +266,31 @@ async function uploadImageFile(file) {
     return subpath;
 }
 
+function getSelectedImageBridge() {
+    const selectedNodes = Object.values(app.canvas?.selected_nodes || {});
+    return selectedNodes.find((node) => node.type === "ClipboardImageBridge");
+}
+
+function pasteImageIntoSelectedNode(event) {
+    const target = event.target;
+    if (target?.matches?.("input, textarea, [contenteditable='true']")) return;
+
+    const node = getSelectedImageBridge();
+    if (!node) return;
+
+    const file = Array.from(event.clipboardData?.items || [])
+        .find((item) => item.type.startsWith("image/"))
+        ?.getAsFile();
+    if (!file) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    uploadImageFile(file).then((subpath) => {
+        pushHistory(node, subpath, MAX_IMAGE_HISTORY);
+        applyImageToNode(node, subpath);
+    });
+}
+
 app.registerExtension({
     name: "clipboard.bridge.live",
 
@@ -265,6 +301,7 @@ app.registerExtension({
                 onNodeCreated?.apply(this, arguments);
 
                 hideWidget(this.widgets?.find((w) => w.name === "image_path"));
+                hideWidget(this.widgets?.find((w) => w.name === "image"));
                 hideWidget(this.widgets?.find((w) => w.name === "history_json"));
                 hideWidget(this.widgets?.find((w) => w.name === "history_index"));
 
@@ -297,8 +334,10 @@ app.registerExtension({
                 onConfigure?.apply(this, arguments);
                 requestAnimationFrame(() => {
                     const pathWidget = this.widgets?.find((w) => w.name === "image_path");
-                    if (pathWidget && pathWidget.value) {
-                        applyImageToNode(this, pathWidget.value);
+                    const imageWidget = this.widgets?.find((w) => w.name === "image");
+                    const currentPath = imageWidget?.value || pathWidget?.value;
+                    if (currentPath) {
+                        applyImageToNode(this, currentPath);
                     }
                     forceListenOffIfNeeded(this);
                 });
@@ -343,6 +382,7 @@ app.registerExtension({
     async setup() {
         document.addEventListener("copy", markInternalCopy, true);
         document.addEventListener("keydown", markInternalCopyShortcut, true);
+        document.addEventListener("paste", pasteImageIntoSelectedNode, true);
 
         ["mousemove", "mousedown", "keydown", "wheel", "touchstart"].forEach((evt) => {
             document.addEventListener(
