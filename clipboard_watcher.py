@@ -68,7 +68,13 @@ class ClipboardWatcher(threading.Thread):
         if not text:
             return
         h = hashlib.md5(text.encode("utf-8", "ignore")).hexdigest()
-        if not force and h == _last_text_hash:
+        if h == _last_text_hash:
+            # 내용이 실제로 바뀌지 않았다면 재전송하지 않는다.
+            # (Windows의 클립보드 시퀀스 넘버는 다른 프로그램이 클립보드를
+            # 건드리기만 해도 증가할 수 있어서, force=True로 다시 체크가
+            # 돌아도 내용이 같으면 굳이 "새 텍스트"로 재발송할 필요가 없다.
+            # 예전에는 여기서 재전송을 해버려서, 노드에서 Undo로 과거 텍스트로
+            # 되돌려도 곧바로 다시 "최신" 텍스트로 덮어써지는 문제가 있었다.)
             return
         _last_text_hash = h
         LATEST_CLIPBOARD_TEXT = text
@@ -97,14 +103,23 @@ class ClipboardWatcher(threading.Thread):
         h = hashlib.md5(data).hexdigest()
 
         if h == _last_image_hash:
-            if not force:
-                return
-            filename = _last_image_filename
-            if filename is None or not os.path.exists(os.path.join(self.save_dir, filename)):
+            # 클립보드 내용이 실제로 바뀌지 않았다면 아무 것도 하지 않는다.
+            # (Windows 클립보드 시퀀스 넘버는 다른 프로그램이 클립보드를 만지기만
+            # 해도 증가할 수 있어서 force=True로 재체크가 돌 수 있는데, 예전에는
+            # 여기서 "동일한 최신 이미지"를 다시 전송해버렸다. 그 결과 노드에서
+            # Undo로 과거 이미지로 되돌려도 곧바로 다시 최신 이미지로 덮어써지는
+            # 문제가 있었다. 파일이 사라졌더라도 내용이 그대로면 재생성만 하고
+            # 이벤트는 보내지 않는다 - 자리표시자 역할만 유지)
+            if force and (
+                _last_image_filename is None
+                or not os.path.exists(os.path.join(self.save_dir, _last_image_filename))
+            ):
                 filename = self._save_new(data)
-        else:
-            filename = self._save_new(data)
+                _last_image_filename = filename
+                LATEST_CLIPBOARD_IMAGE_PATH = os.path.join(self.save_dir, filename)
+            return
 
+        filename = self._save_new(data)
         _last_image_hash = h
         _last_image_filename = filename
         LATEST_CLIPBOARD_IMAGE_PATH = os.path.join(self.save_dir, filename)

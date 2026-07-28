@@ -447,6 +447,12 @@ app.registerExtension({
                     result = newText;
                 }
 
+                // 클립보드 내용이 실제로 바뀌지 않았다면(중복 이벤트 등) 히스토리를
+                // 건드리지 않는다. 그렇지 않으면 Undo로 과거 내용을 선택해둔
+                // 상태에서 중복 이벤트가 오는 순간 포인터가 다시 최신으로
+                // 튕겨나가버린다.
+                if (result === currentText) return;
+
                 pushHistory(node, result, MAX_TEXT_HISTORY);
                 textWidget.value = result;
                 delivered = true;
@@ -467,6 +473,13 @@ app.registerExtension({
                 const listenWidget = node.widgets?.find((w) => w.name === "listen");
                 const isListening = listenWidget ? listenWidget.value : false;
                 if (!isListening) return;
+
+                // 이미 히스토리의 최신 항목과 동일한 이미지라면(중복 이벤트 등)
+                // 다시 push하지 않는다. Undo로 과거 이미지를 선택해둔 상태에서
+                // 같은 최신 이미지 이벤트가 재수신되면 히스토리 인덱스가 다시
+                // 맨 끝(최신)으로 튕겨나가는 문제를 막는다.
+                const history = readHistory(node);
+                if (history.length > 0 && history[history.length - 1] === subpath) return;
 
                 pushHistory(node, subpath, MAX_IMAGE_HISTORY);
                 applyImageToNode(node, subpath);
