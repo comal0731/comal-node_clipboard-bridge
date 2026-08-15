@@ -155,6 +155,37 @@ function markInternalCopyShortcut(event) {
     lastInternalImageCopyTime = now;
 }
 
+// ComfyUI 코어의 노드 우클릭 메뉴 "Copy Image"는 document의 copy 이벤트를 전혀
+// 발생시키지 않는 navigator.clipboard.write(new ClipboardItem(...))를 직접
+// 호출한다. 그래서 markInternalCopy/markInternalCopyShortcut로는 이 복사를
+// 감지할 수 없었고, 그 결과 "Allow Comfy Image"가 꺼져 있어도 이 방식으로
+// 복사한 이미지는 내부 복사로 인식되지 않아 그대로 붙여넣기가 통과되었다.
+// navigator.clipboard.write 자체를 감싸서 호출 시점을 내부 복사로 기록한다.
+function patchClipboardWriteDetection() {
+    const nativeClipboard = navigator.clipboard;
+    if (!nativeClipboard || typeof nativeClipboard.write !== "function") return;
+    const originalWrite = nativeClipboard.write.bind(nativeClipboard);
+    nativeClipboard.write = async function (items) {
+        try {
+            const hasImage = (items || []).some((item) =>
+                Array.from(item.types || []).some((type) => type.startsWith("image/"))
+            );
+            const hasText = (items || []).some((item) =>
+                Array.from(item.types || []).some((type) => type.startsWith("text/"))
+            );
+            const now = Date.now();
+            if (hasText || !hasImage) lastInternalTextCopyTime = now;
+            if (hasImage || !hasText) lastInternalImageCopyTime = now;
+        } catch (e) {
+            // Be defensive: never let instrumentation break the real copy.
+            const now = Date.now();
+            lastInternalTextCopyTime = now;
+            lastInternalImageCopyTime = now;
+        }
+        return originalWrite(items);
+    };
+}
+
 function isRecentInternalCopy(kind) {
     const copiedAt = kind === "text" ? lastInternalTextCopyTime : lastInternalImageCopyTime;
     return Date.now() - copiedAt <= INTERNAL_COPY_WINDOW_MS;
@@ -297,10 +328,18 @@ function pasteImageIntoSelectedNode(event) {
     // 이 체크들이 없으면 사용자가 캔버스에서 아무 이미지나 복사했을 때 의도치
     // 않게 노드에 꽂혀버린다.
     const listenWidget = node.widgets?.find((w) => w.name === "listen");
-    if (!(listenWidget ? listenWidget.value : false)) return;
+    if (!(listenWidget ? listenWidget.value : false)) {
+        console.log("[ClipboardBridge][paste] blocked: listen is off for node", node.id);
+        return;
+    }
 
     const { acceptInternalImage } = getGlobalSettings();
-    if (!acceptInternalImage && isRecentInternalCopy("image")) return;
+    const recentInternal = isRecentInternalCopy("image");
+    console.log("[ClipboardBridge][paste] listen=on, acceptInternalImage=", acceptInternalImage, "recentInternalCopy=", recentInternal);
+    if (!acceptInternalImage && recentInternal) {
+        console.log("[ClipboardBridge][paste] blocked: recent in-app copy and Allow Comfy Image is off");
+        return;
+    }
 
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -521,6 +560,7 @@ app.registerExtension({
     },
 
     async setup() {
+        patchClipboardWriteDetection();
         document.addEventListener("copy", markInternalCopy, true);
         document.addEventListener("keydown", markInternalCopyShortcut, true);
         document.addEventListener("paste", pasteImageIntoSelectedNode, true);
