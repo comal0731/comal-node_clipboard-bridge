@@ -291,6 +291,61 @@ function pasteImageIntoSelectedNode(event) {
     });
 }
 
+// ---------- 전역 드래그 앤 드롭 (캔버스 히트테스트 우회용 백업 경로) ----------
+//
+// ComfyUI 프론트엔드 버전에 따라(특히 이미지가 이미 세팅된 노드 위에서) LiteGraph/Vue의
+// dragover/drop 히트테스트가 노드를 못 찾는 경우가 있어 node.onDragOver/onDragDrop이
+// 아예 호출되지 않는 문제가 있다. 여기서는 커서의 캔버스 좌표로 직접 노드를 찾아서
+// 처리하므로 프론트엔드 내부 렌더링 방식(캔버스 vs DOM/Vue)과 무관하게 항상 동작한다.
+function getImageBridgeAtEvent(event) {
+    // Position-based lookup only (unlike paste, a drop has a real cursor
+    // location) so we never hijack a drop meant for the empty canvas or a
+    // different node just because a ClipboardImageBridge happens to be
+    // selected elsewhere.
+    try {
+        app.canvas.adjustMouseEvent(event);
+        const node = app.canvas.graph?.getNodeOnPos?.(event.canvasX, event.canvasY);
+        if (node && node.type === "ClipboardImageBridge") return node;
+    } catch (e) {
+        // adjustMouseEvent/getNodeOnPos internals can vary between frontend
+        // versions; treat as "not over a bridge node" rather than throwing.
+    }
+    return null;
+}
+
+function extractDroppedImageFile(dataTransfer) {
+    const files = dataTransfer?.files;
+    if (!files || files.length === 0) return null;
+    const file = files[0];
+    return file.type.startsWith("image/") ? file : null;
+}
+
+function handleGlobalDragOver(event) {
+    if (!event.dataTransfer?.types?.includes("Files")) return;
+    if (!getImageBridgeAtEvent(event)) return;
+    // Claim the event so both the legacy canvas handler and the Vue drop
+    // zone leave it alone; without this the browser may show "no drop" and
+    // the subsequent drop event can be cancelled by the default handler.
+    event.preventDefault();
+    event.stopPropagation();
+}
+
+function handleGlobalDrop(event) {
+    if (!event.dataTransfer?.types?.includes("Files")) return;
+    const node = getImageBridgeAtEvent(event);
+    if (!node) return;
+
+    const file = extractDroppedImageFile(event.dataTransfer);
+    if (!file) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    uploadImageFile(file).then((subpath) => {
+        pushHistory(node, subpath, MAX_IMAGE_HISTORY);
+        applyImageToNode(node, subpath);
+    });
+}
+
 app.registerExtension({
     name: "clipboard.bridge.live",
 
@@ -383,6 +438,8 @@ app.registerExtension({
         document.addEventListener("copy", markInternalCopy, true);
         document.addEventListener("keydown", markInternalCopyShortcut, true);
         document.addEventListener("paste", pasteImageIntoSelectedNode, true);
+        document.addEventListener("dragover", handleGlobalDragOver, true);
+        document.addEventListener("drop", handleGlobalDrop, true);
 
         ["mousemove", "mousedown", "keydown", "wheel", "touchstart"].forEach((evt) => {
             document.addEventListener(
