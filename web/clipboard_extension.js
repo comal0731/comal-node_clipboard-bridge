@@ -114,8 +114,6 @@ function getGlobalSettings() {
             autoOffMinutes: 30,
             acceptInternalText: false,
             acceptInternalImage: false,
-            focusOnText: false,
-            focusOnImage: false,
         };
     }
     if (nodes.length > 1) {
@@ -138,8 +136,6 @@ function getGlobalSettings() {
     const minutesWidget = node.widgets?.find((w) => w.name === "idle_off_minutes");
     const internalTextWidget = node.widgets?.find((w) => w.name === "allow_comfy_text");
     const internalImageWidget = node.widgets?.find((w) => w.name === "allow_comfy_image");
-    const focusTextWidget = node.widgets?.find((w) => w.name === "focus_text_tab");
-    const focusImageWidget = node.widgets?.find((w) => w.name === "focus_image_tab");
     if (!internalImageWidget) {
         console.log("[ClipboardBridge][settings] WARNING: node", node.id, "has no 'allow_comfy_image' widget, forcing false");
     }
@@ -148,8 +144,6 @@ function getGlobalSettings() {
         autoOffMinutes: minutesWidget ? minutesWidget.value : 30,
         acceptInternalText: internalTextWidget ? internalTextWidget.value : false,
         acceptInternalImage: internalImageWidget ? internalImageWidget.value : false,
-        focusOnText: focusTextWidget ? focusTextWidget.value : false,
-        focusOnImage: focusImageWidget ? focusImageWidget.value : false,
     };
 }
 
@@ -208,14 +202,6 @@ function patchClipboardWriteDetection() {
 function isRecentInternalCopy(kind) {
     const copiedAt = kind === "text" ? lastInternalTextCopyTime : lastInternalImageCopyTime;
     return Date.now() - copiedAt <= INTERNAL_COPY_WINDOW_MS;
-}
-
-function requestComfyTabFocus() {
-    // Browsers may reject background-tab activation without a user gesture.
-    // This is the strongest standards-based request available to a web
-    // extension running inside the ComfyUI page.
-    window.focus();
-    app.canvas?.canvas?.focus?.({ preventScroll: true });
 }
 
 function turnOffAllListen() {
@@ -634,12 +620,11 @@ app.registerExtension({
         }, CHECK_INTERVAL_MS);
 
         api.addEventListener("clipboard.text", (event) => {
-            const { acceptInternalText, focusOnText } = getGlobalSettings();
+            const { acceptInternalText } = getGlobalSettings();
             if (!acceptInternalText && isRecentInternalCopy("text")) return;
 
             const newText = event.detail.text;
             const receivers = findNodesByType("ClipboardTextReceiver");
-            let delivered = false;
             receivers.forEach((node) => {
                 const textWidget = node.widgets?.find((w) => w.name === "current_text");
                 if (!textWidget) return;
@@ -685,20 +670,17 @@ app.registerExtension({
 
                 pushHistory(node, result, MAX_TEXT_HISTORY);
                 textWidget.value = result;
-                delivered = true;
             });
-            if (delivered && focusOnText) requestComfyTabFocus();
             app.canvas.setDirty(true, true);
         });
 
         api.addEventListener("clipboard.image", (event) => {
-            const { acceptInternalImage, focusOnImage } = getGlobalSettings();
+            const { acceptInternalImage } = getGlobalSettings();
             if (!acceptInternalImage && isRecentInternalCopy("image")) return;
 
             const filename = event.detail.filename;
             const subpath = `clipboard/${filename}`;
             const bridges = findNodesByType("ClipboardImageBridge");
-            let delivered = false;
             bridges.forEach((node) => {
                 const listenWidget = node.widgets?.find((w) => w.name === "listen");
                 const isListening = listenWidget ? listenWidget.value : false;
@@ -713,9 +695,7 @@ app.registerExtension({
 
                 pushHistory(node, subpath, MAX_IMAGE_HISTORY);
                 applyImageToNode(node, subpath);
-                delivered = true;
             });
-            if (delivered && focusOnImage) requestComfyTabFocus();
         });
     },
 });

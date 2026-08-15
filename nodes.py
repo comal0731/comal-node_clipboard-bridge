@@ -43,16 +43,6 @@ class ClipboardSafetyOptions:
                         "label_on": "Allow Comfy Image ON",
                         "label_off": "Allow Comfy Image OFF",
                     }),
-                    "focus_text_tab": ("BOOLEAN", {
-                        "default": False,
-                        "label_on": "Focus Text Tab ON",
-                        "label_off": "Focus Text Tab OFF",
-                    }),
-                    "focus_image_tab": ("BOOLEAN", {
-                        "default": False,
-                        "label_on": "Focus Image Tab ON",
-                        "label_off": "Focus Image Tab OFF",
-                    }),
                 }}
     RETURN_TYPES = ()
     FUNCTION = "noop"
@@ -64,8 +54,6 @@ class ClipboardSafetyOptions:
         idle_off_minutes=30,
         allow_comfy_text=False,
         allow_comfy_image=False,
-        focus_text_tab=False,
-        focus_image_tab=False,
     ):
         return ()
 
