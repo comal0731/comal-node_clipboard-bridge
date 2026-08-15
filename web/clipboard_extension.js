@@ -288,6 +288,20 @@ function pasteImageIntoSelectedNode(event) {
         ?.getAsFile();
     if (!file) return;
 
+    // 이 붙여넣기는 OS 클립보드 감시(clipboard.image 소켓 이벤트)와 별개로
+    // 브라우저의 네이티브 paste 이벤트를 직접 잡는 경로다. 아래 두 안전장치를
+    // 반드시 지켜야 한다:
+    //   1) listen 스위치가 꺼져 있으면(기본값) 이 노드는 아무것도 받지 않는다.
+    //   2) Global Options의 "Allow Comfy Image"가 꺼져 있으면(기본값) ComfyUI
+    //      내부에서 복사한 이미지(예: 다른 노드/미리보기 이미지 복사)는 걸러낸다.
+    // 이 체크들이 없으면 사용자가 캔버스에서 아무 이미지나 복사했을 때 의도치
+    // 않게 노드에 꽂혀버린다.
+    const listenWidget = node.widgets?.find((w) => w.name === "listen");
+    if (!(listenWidget ? listenWidget.value : false)) return;
+
+    const { acceptInternalImage } = getGlobalSettings();
+    if (!acceptInternalImage && isRecentInternalCopy("image")) return;
+
     event.preventDefault();
     event.stopImmediatePropagation();
     uploadImageFile(file).then((subpath) => {
