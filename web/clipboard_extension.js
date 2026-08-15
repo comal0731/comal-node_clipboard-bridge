@@ -1,6 +1,11 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
+// 이 파일이 실제로 로드/적용됐는지 브라우저 콘솔(F12)에서 바로 확인하기 위한 버전 마커.
+// 드래그 앤 드롭이 안 될 때 콘솔에 이 로그가 안 보이면, ComfyUI가 이 파일을 아예
+// 로드하지 않은 것(경로/캐시/재시작 문제)이므로 로직을 고칠 필요가 없다는 뜻이다.
+console.log("[ClipboardBridge] clipboard_extension.js loaded (drag-drop-diagnostic build 2026-08-15)");
+
 const MAX_TEXT_HISTORY = 10;
 const MAX_IMAGE_HISTORY = 5;
 const CHECK_INTERVAL_MS = 10000;
@@ -305,10 +310,15 @@ function getImageBridgeAtEvent(event) {
     try {
         app.canvas.adjustMouseEvent(event);
         const node = app.canvas.graph?.getNodeOnPos?.(event.canvasX, event.canvasY);
+        console.log("[ClipboardBridge][dnd] getImageBridgeAtEvent ->", {
+            canvasX: event.canvasX,
+            canvasY: event.canvasY,
+            foundNodeType: node?.type,
+            foundNodeId: node?.id,
+        });
         if (node && node.type === "ClipboardImageBridge") return node;
     } catch (e) {
-        // adjustMouseEvent/getNodeOnPos internals can vary between frontend
-        // versions; treat as "not over a bridge node" rather than throwing.
+        console.log("[ClipboardBridge][dnd] getImageBridgeAtEvent threw", e);
     }
     return null;
 }
@@ -321,7 +331,10 @@ function extractDroppedImageFile(dataTransfer) {
 }
 
 function handleGlobalDragOver(event) {
-    if (!event.dataTransfer?.types?.includes("Files")) return;
+    if (!event.dataTransfer?.types?.includes("Files")) {
+        console.log("[ClipboardBridge][dnd] dragover ignored: no Files type", Array.from(event.dataTransfer?.types || []));
+        return;
+    }
     if (!getImageBridgeAtEvent(event)) return;
     // Claim the event so both the legacy canvas handler and the Vue drop
     // zone leave it alone; without this the browser may show "no drop" and
@@ -331,13 +344,21 @@ function handleGlobalDragOver(event) {
 }
 
 function handleGlobalDrop(event) {
+    console.log("[ClipboardBridge][dnd] drop event fired, target=", event.target, "types=", Array.from(event.dataTransfer?.types || []));
     if (!event.dataTransfer?.types?.includes("Files")) return;
     const node = getImageBridgeAtEvent(event);
-    if (!node) return;
+    if (!node) {
+        console.log("[ClipboardBridge][dnd] drop ignored: no ClipboardImageBridge node under cursor");
+        return;
+    }
 
     const file = extractDroppedImageFile(event.dataTransfer);
-    if (!file) return;
+    if (!file) {
+        console.log("[ClipboardBridge][dnd] drop ignored: dropped file is not an image", event.dataTransfer?.files?.[0]?.type);
+        return;
+    }
 
+    console.log("[ClipboardBridge][dnd] uploading dropped file to node", node.id);
     event.preventDefault();
     event.stopImmediatePropagation();
     uploadImageFile(file).then((subpath) => {
@@ -369,9 +390,12 @@ app.registerExtension({
                 );
 
                 this.onDragOver = function (e) {
-                    return !!(e.dataTransfer && e.dataTransfer.types.includes("Files"));
+                    const ok = !!(e.dataTransfer && e.dataTransfer.types.includes("Files"));
+                    console.log("[ClipboardBridge][dnd] node.onDragOver called, node=", this.id, "ok=", ok);
+                    return ok;
                 };
                 this.onDragDrop = function (e) {
+                    console.log("[ClipboardBridge][dnd] node.onDragDrop called, node=", this.id);
                     const files = e.dataTransfer?.files;
                     if (!files || files.length === 0) return false;
                     const file = files[0];
@@ -440,6 +464,7 @@ app.registerExtension({
         document.addEventListener("paste", pasteImageIntoSelectedNode, true);
         document.addEventListener("dragover", handleGlobalDragOver, true);
         document.addEventListener("drop", handleGlobalDrop, true);
+        console.log("[ClipboardBridge] dragover/drop listeners registered");
 
         ["mousemove", "mousedown", "keydown", "wheel", "touchstart"].forEach((evt) => {
             document.addEventListener(
