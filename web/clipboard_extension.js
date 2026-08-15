@@ -108,29 +108,42 @@ function addDualButtonWidget(node, leftText, rightText, onLeft, onRight) {
 function getGlobalSettings() {
     const nodes = findNodesByType("ClipboardSafetyOptions");
     if (nodes.length === 0) {
+        console.log("[ClipboardBridge][settings] no ClipboardSafetyOptions node found on canvas, using safe defaults");
         return {
             resetOnReload: true,
             autoOffMinutes: 30,
             acceptInternalText: false,
             acceptInternalImage: false,
-            focusOnText: false,
-            focusOnImage: false,
         };
+    }
+    if (nodes.length > 1) {
+        // getGlobalSettings() only ever reads the first node it finds. If the
+        // user has more than one ClipboardSafetyOptions node on the canvas
+        // (easy to do by accident), toggling a checkbox on any node other
+        // than nodes[0] silently has no effect at all, which looks exactly
+        // like "I turned Allow Comfy Image on and it still doesn't work".
+        console.log(
+            "[ClipboardBridge][settings] WARNING: found",
+            nodes.length,
+            "ClipboardSafetyOptions nodes; only node id",
+            nodes[0].id,
+            "is actually used. Delete the extra one(s) or edit that specific node.",
+            nodes.map((n) => n.id)
+        );
     }
     const node = nodes[0];
     const resetWidget = node.widgets?.find((w) => w.name === "reset_listen");
     const minutesWidget = node.widgets?.find((w) => w.name === "idle_off_minutes");
     const internalTextWidget = node.widgets?.find((w) => w.name === "allow_comfy_text");
     const internalImageWidget = node.widgets?.find((w) => w.name === "allow_comfy_image");
-    const focusTextWidget = node.widgets?.find((w) => w.name === "focus_text_tab");
-    const focusImageWidget = node.widgets?.find((w) => w.name === "focus_image_tab");
+    if (!internalImageWidget) {
+        console.log("[ClipboardBridge][settings] WARNING: node", node.id, "has no 'allow_comfy_image' widget, forcing false");
+    }
     return {
         resetOnReload: resetWidget ? resetWidget.value : true,
         autoOffMinutes: minutesWidget ? minutesWidget.value : 30,
         acceptInternalText: internalTextWidget ? internalTextWidget.value : false,
         acceptInternalImage: internalImageWidget ? internalImageWidget.value : false,
-        focusOnText: focusTextWidget ? focusTextWidget.value : false,
-        focusOnImage: focusImageWidget ? focusImageWidget.value : false,
     };
 }
 
@@ -155,17 +168,40 @@ function markInternalCopyShortcut(event) {
     lastInternalImageCopyTime = now;
 }
 
+// ComfyUI 코어의 노드 우클릭 메뉴 "Copy Image"는 document의 copy 이벤트를 전혀
+// 발생시키지 않는 navigator.clipboard.write(new ClipboardItem(...))를 직접
+// 호출한다. 그래서 markInternalCopy/markInternalCopyShortcut로는 이 복사를
+// 감지할 수 없었고, 그 결과 "Allow Comfy Image"가 꺼져 있어도 이 방식으로
+// 복사한 이미지는 내부 복사로 인식되지 않아 그대로 붙여넣기가 통과되었다.
+// navigator.clipboard.write 자체를 감싸서 호출 시점을 내부 복사로 기록한다.
+function patchClipboardWriteDetection() {
+    const nativeClipboard = navigator.clipboard;
+    if (!nativeClipboard || typeof nativeClipboard.write !== "function") return;
+    const originalWrite = nativeClipboard.write.bind(nativeClipboard);
+    nativeClipboard.write = async function (items) {
+        try {
+            const hasImage = (items || []).some((item) =>
+                Array.from(item.types || []).some((type) => type.startsWith("image/"))
+            );
+            const hasText = (items || []).some((item) =>
+                Array.from(item.types || []).some((type) => type.startsWith("text/"))
+            );
+            const now = Date.now();
+            if (hasText || !hasImage) lastInternalTextCopyTime = now;
+            if (hasImage || !hasText) lastInternalImageCopyTime = now;
+        } catch (e) {
+            // Be defensive: never let instrumentation break the real copy.
+            const now = Date.now();
+            lastInternalTextCopyTime = now;
+            lastInternalImageCopyTime = now;
+        }
+        return originalWrite(items);
+    };
+}
+
 function isRecentInternalCopy(kind) {
     const copiedAt = kind === "text" ? lastInternalTextCopyTime : lastInternalImageCopyTime;
     return Date.now() - copiedAt <= INTERNAL_COPY_WINDOW_MS;
-}
-
-function requestComfyTabFocus() {
-    // Browsers may reject background-tab activation without a user gesture.
-    // This is the strongest standards-based request available to a web
-    // extension running inside the ComfyUI page.
-    window.focus();
-    app.canvas?.canvas?.focus?.({ preventScroll: true });
 }
 
 function turnOffAllListen() {
@@ -281,12 +317,31 @@ function pasteImageIntoSelectedNode(event) {
     if (target?.matches?.("input, textarea, [contenteditable='true']")) return;
 
     const node = getSelectedImageBridge();
-    if (!node) return;
+    if (!node) {
+        // This is the most common silent failure: clicking a checkbox on the
+        // Global Options node (or anywhere else on the canvas) deselects the
+        // Load Image (Clipboard) node, so Ctrl+V has nothing to paste into.
+        // Re-click the node itself right before pasting.
+        console.log(
+            "[ClipboardBridge][paste] ignored: no ClipboardImageBridge node is currently selected. Click the node first, then paste.",
+            "currently selected node types=",
+            Object.values(app.canvas?.selected_nodes || {}).map((n) => n.type)
+        );
+        return;
+    }
 
     const file = Array.from(event.clipboardData?.items || [])
         .find((item) => item.type.startsWith("image/"))
         ?.getAsFile();
-    if (!file) return;
+    if (!file) {
+        console.log(
+            "[ClipboardBridge][paste] ignored: clipboard has no image data for node",
+            node.id,
+            "types=",
+            Array.from(event.clipboardData?.types || [])
+        );
+        return;
+    }
 
     // 이 붙여넣기는 OS 클립보드 감시(clipboard.image 소켓 이벤트)와 별개로
     // 브라우저의 네이티브 paste 이벤트를 직접 잡는 경로다. 아래 두 안전장치를
@@ -297,17 +352,33 @@ function pasteImageIntoSelectedNode(event) {
     // 이 체크들이 없으면 사용자가 캔버스에서 아무 이미지나 복사했을 때 의도치
     // 않게 노드에 꽂혀버린다.
     const listenWidget = node.widgets?.find((w) => w.name === "listen");
-    if (!(listenWidget ? listenWidget.value : false)) return;
+    if (!(listenWidget ? listenWidget.value : false)) {
+        console.log("[ClipboardBridge][paste] blocked: listen is off for node", node.id);
+        return;
+    }
 
     const { acceptInternalImage } = getGlobalSettings();
-    if (!acceptInternalImage && isRecentInternalCopy("image")) return;
+    const recentInternal = isRecentInternalCopy("image");
+    console.log("[ClipboardBridge][paste] listen=on, acceptInternalImage=", acceptInternalImage, "recentInternalCopy=", recentInternal);
+    if (!acceptInternalImage && recentInternal) {
+        console.log("[ClipboardBridge][paste] blocked: recent in-app copy and Allow Comfy Image is off");
+        return;
+    }
 
     event.preventDefault();
     event.stopImmediatePropagation();
-    uploadImageFile(file).then((subpath) => {
-        pushHistory(node, subpath, MAX_IMAGE_HISTORY);
-        applyImageToNode(node, subpath);
-    });
+    console.log("[ClipboardBridge][paste] accepted, uploading to node", node.id);
+    uploadImageFile(file)
+        .then((subpath) => {
+            pushHistory(node, subpath, MAX_IMAGE_HISTORY);
+            applyImageToNode(node, subpath);
+        })
+        .catch((e) => {
+            // Without this, a failed /upload/image request (e.g. a stale
+            // session or a server error) fails completely silently and looks
+            // exactly like the paste was blocked by the safety checks above.
+            console.log("[ClipboardBridge][paste] upload failed for node", node.id, e);
+        });
 }
 
 // ---------- 전역 드래그 앤 드롭 (캔버스 히트테스트 우회용 백업 경로) ----------
@@ -521,6 +592,7 @@ app.registerExtension({
     },
 
     async setup() {
+        patchClipboardWriteDetection();
         document.addEventListener("copy", markInternalCopy, true);
         document.addEventListener("keydown", markInternalCopyShortcut, true);
         document.addEventListener("paste", pasteImageIntoSelectedNode, true);
@@ -548,12 +620,11 @@ app.registerExtension({
         }, CHECK_INTERVAL_MS);
 
         api.addEventListener("clipboard.text", (event) => {
-            const { acceptInternalText, focusOnText } = getGlobalSettings();
+            const { acceptInternalText } = getGlobalSettings();
             if (!acceptInternalText && isRecentInternalCopy("text")) return;
 
             const newText = event.detail.text;
             const receivers = findNodesByType("ClipboardTextReceiver");
-            let delivered = false;
             receivers.forEach((node) => {
                 const textWidget = node.widgets?.find((w) => w.name === "current_text");
                 if (!textWidget) return;
@@ -599,20 +670,17 @@ app.registerExtension({
 
                 pushHistory(node, result, MAX_TEXT_HISTORY);
                 textWidget.value = result;
-                delivered = true;
             });
-            if (delivered && focusOnText) requestComfyTabFocus();
             app.canvas.setDirty(true, true);
         });
 
         api.addEventListener("clipboard.image", (event) => {
-            const { acceptInternalImage, focusOnImage } = getGlobalSettings();
+            const { acceptInternalImage } = getGlobalSettings();
             if (!acceptInternalImage && isRecentInternalCopy("image")) return;
 
             const filename = event.detail.filename;
             const subpath = `clipboard/${filename}`;
             const bridges = findNodesByType("ClipboardImageBridge");
-            let delivered = false;
             bridges.forEach((node) => {
                 const listenWidget = node.widgets?.find((w) => w.name === "listen");
                 const isListening = listenWidget ? listenWidget.value : false;
@@ -627,9 +695,7 @@ app.registerExtension({
 
                 pushHistory(node, subpath, MAX_IMAGE_HISTORY);
                 applyImageToNode(node, subpath);
-                delivered = true;
             });
-            if (delivered && focusOnImage) requestComfyTabFocus();
         });
     },
 });
