@@ -323,16 +323,60 @@ function getImageBridgeAtEvent(event) {
     return null;
 }
 
-function extractDroppedImageFile(dataTransfer) {
+// text/uri-list (또는 구형 text/x-moz-url) 로만 이미지 URL을 넘겨주는 사이트를 위한 폴백.
+// ComfyUI 코어(extractFilesFromDragEvent)도 Files가 없을 때 동일한 방식으로 처리하는데,
+// 그 경로를 타면 우리 노드가 아니라 캔버스에 새 Load Image 노드가 생성되어 버리므로,
+// 커서가 우리 노드 위에 있을 때는 우리가 먼저 가로채서 그 노드에 바로 넣어준다.
+const URI_LIST_TYPES = ["text/uri-list", "text/x-moz-url"];
+
+function getDroppedImageUrl(dataTransfer) {
+    const type = URI_LIST_TYPES.find((t) => dataTransfer?.types?.includes(t));
+    if (!type) return null;
+    // text/uri-list can contain multiple lines (comments start with '#');
+    // text/x-moz-url is "<url>\n<title>". Either way the first non-comment
+    // line is the URL we want.
+    const raw = dataTransfer.getData(type) || "";
+    const url = raw.split("\n").map((l) => l.trim()).find((l) => l && !l.startsWith("#"));
+    return url || null;
+}
+
+async function extractDroppedImageFile(dataTransfer) {
     const files = dataTransfer?.files;
-    if (!files || files.length === 0) return null;
-    const file = files[0];
-    return file.type.startsWith("image/") ? file : null;
+    if (files && files.length > 0) {
+        const file = files[0];
+        return file.type.startsWith("image/") ? file : null;
+    }
+
+    const url = getDroppedImageUrl(dataTransfer);
+    if (!url) return null;
+    try {
+        const resp = await fetch(url);
+        const blob = await resp.blob();
+        if (!blob.type.startsWith("image/")) {
+            console.log("[ClipboardBridge][dnd] uri-list fetch was not an image", url, blob.type);
+            return null;
+        }
+        const name = url.split("/").pop()?.split("?")[0] || "dropped_image";
+        return new File([blob], name, { type: blob.type });
+    } catch (e) {
+        console.log("[ClipboardBridge][dnd] failed to fetch dropped image url", url, e);
+        return null;
+    }
+}
+
+// dragover 시점에는 보안상 브라우저가 dataTransfer.getData()에 빈 문자열만
+// 돌려주는 경우가 많다(types 목록만 미리보기 가능, 실제 값은 drop에서만 읽힘).
+// 그래서 dragover에서는 타입 존재 여부만 보고, 실제 URL 추출은 drop에서 한다.
+function dragEventTypesLookDroppable(dataTransfer) {
+    return !!(
+        dataTransfer?.types?.includes("Files") ||
+        URI_LIST_TYPES.some((t) => dataTransfer?.types?.includes(t))
+    );
 }
 
 function handleGlobalDragOver(event) {
-    if (!event.dataTransfer?.types?.includes("Files")) {
-        console.log("[ClipboardBridge][dnd] dragover ignored: no Files type", Array.from(event.dataTransfer?.types || []));
+    if (!dragEventTypesLookDroppable(event.dataTransfer)) {
+        console.log("[ClipboardBridge][dnd] dragover ignored: no Files/uri-list type", Array.from(event.dataTransfer?.types || []));
         return;
     }
     if (!getImageBridgeAtEvent(event)) return;
@@ -343,24 +387,28 @@ function handleGlobalDragOver(event) {
     event.stopPropagation();
 }
 
-function handleGlobalDrop(event) {
+async function handleGlobalDrop(event) {
     console.log("[ClipboardBridge][dnd] drop event fired, target=", event.target, "types=", Array.from(event.dataTransfer?.types || []));
-    if (!event.dataTransfer?.types?.includes("Files")) return;
+    if (!dragEventTypesLookDroppable(event.dataTransfer)) return;
     const node = getImageBridgeAtEvent(event);
     if (!node) {
         console.log("[ClipboardBridge][dnd] drop ignored: no ClipboardImageBridge node under cursor");
         return;
     }
 
-    const file = extractDroppedImageFile(event.dataTransfer);
+    // Snapshot dataTransfer synchronously: it becomes unusable once the drop
+    // event handler returns, but the uri-list fallback needs to await fetch().
+    const dataTransfer = event.dataTransfer;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    const file = await extractDroppedImageFile(dataTransfer);
     if (!file) {
-        console.log("[ClipboardBridge][dnd] drop ignored: dropped file is not an image", event.dataTransfer?.files?.[0]?.type);
+        console.log("[ClipboardBridge][dnd] drop ignored: could not resolve an image file", dataTransfer?.files?.[0]?.type);
         return;
     }
 
     console.log("[ClipboardBridge][dnd] uploading dropped file to node", node.id);
-    event.preventDefault();
-    event.stopImmediatePropagation();
     uploadImageFile(file).then((subpath) => {
         pushHistory(node, subpath, MAX_IMAGE_HISTORY);
         applyImageToNode(node, subpath);
