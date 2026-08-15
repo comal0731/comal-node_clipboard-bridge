@@ -108,6 +108,7 @@ function addDualButtonWidget(node, leftText, rightText, onLeft, onRight) {
 function getGlobalSettings() {
     const nodes = findNodesByType("ClipboardSafetyOptions");
     if (nodes.length === 0) {
+        console.log("[ClipboardBridge][settings] no ClipboardSafetyOptions node found on canvas, using safe defaults");
         return {
             resetOnReload: true,
             autoOffMinutes: 30,
@@ -117,6 +118,21 @@ function getGlobalSettings() {
             focusOnImage: false,
         };
     }
+    if (nodes.length > 1) {
+        // getGlobalSettings() only ever reads the first node it finds. If the
+        // user has more than one ClipboardSafetyOptions node on the canvas
+        // (easy to do by accident), toggling a checkbox on any node other
+        // than nodes[0] silently has no effect at all, which looks exactly
+        // like "I turned Allow Comfy Image on and it still doesn't work".
+        console.log(
+            "[ClipboardBridge][settings] WARNING: found",
+            nodes.length,
+            "ClipboardSafetyOptions nodes; only node id",
+            nodes[0].id,
+            "is actually used. Delete the extra one(s) or edit that specific node.",
+            nodes.map((n) => n.id)
+        );
+    }
     const node = nodes[0];
     const resetWidget = node.widgets?.find((w) => w.name === "reset_listen");
     const minutesWidget = node.widgets?.find((w) => w.name === "idle_off_minutes");
@@ -124,6 +140,9 @@ function getGlobalSettings() {
     const internalImageWidget = node.widgets?.find((w) => w.name === "allow_comfy_image");
     const focusTextWidget = node.widgets?.find((w) => w.name === "focus_text_tab");
     const focusImageWidget = node.widgets?.find((w) => w.name === "focus_image_tab");
+    if (!internalImageWidget) {
+        console.log("[ClipboardBridge][settings] WARNING: node", node.id, "has no 'allow_comfy_image' widget, forcing false");
+    }
     return {
         resetOnReload: resetWidget ? resetWidget.value : true,
         autoOffMinutes: minutesWidget ? minutesWidget.value : 30,
@@ -312,12 +331,31 @@ function pasteImageIntoSelectedNode(event) {
     if (target?.matches?.("input, textarea, [contenteditable='true']")) return;
 
     const node = getSelectedImageBridge();
-    if (!node) return;
+    if (!node) {
+        // This is the most common silent failure: clicking a checkbox on the
+        // Global Options node (or anywhere else on the canvas) deselects the
+        // Load Image (Clipboard) node, so Ctrl+V has nothing to paste into.
+        // Re-click the node itself right before pasting.
+        console.log(
+            "[ClipboardBridge][paste] ignored: no ClipboardImageBridge node is currently selected. Click the node first, then paste.",
+            "currently selected node types=",
+            Object.values(app.canvas?.selected_nodes || {}).map((n) => n.type)
+        );
+        return;
+    }
 
     const file = Array.from(event.clipboardData?.items || [])
         .find((item) => item.type.startsWith("image/"))
         ?.getAsFile();
-    if (!file) return;
+    if (!file) {
+        console.log(
+            "[ClipboardBridge][paste] ignored: clipboard has no image data for node",
+            node.id,
+            "types=",
+            Array.from(event.clipboardData?.types || [])
+        );
+        return;
+    }
 
     // 이 붙여넣기는 OS 클립보드 감시(clipboard.image 소켓 이벤트)와 별개로
     // 브라우저의 네이티브 paste 이벤트를 직접 잡는 경로다. 아래 두 안전장치를
@@ -343,10 +381,18 @@ function pasteImageIntoSelectedNode(event) {
 
     event.preventDefault();
     event.stopImmediatePropagation();
-    uploadImageFile(file).then((subpath) => {
-        pushHistory(node, subpath, MAX_IMAGE_HISTORY);
-        applyImageToNode(node, subpath);
-    });
+    console.log("[ClipboardBridge][paste] accepted, uploading to node", node.id);
+    uploadImageFile(file)
+        .then((subpath) => {
+            pushHistory(node, subpath, MAX_IMAGE_HISTORY);
+            applyImageToNode(node, subpath);
+        })
+        .catch((e) => {
+            // Without this, a failed /upload/image request (e.g. a stale
+            // session or a server error) fails completely silently and looks
+            // exactly like the paste was blocked by the safety checks above.
+            console.log("[ClipboardBridge][paste] upload failed for node", node.id, e);
+        });
 }
 
 // ---------- 전역 드래그 앤 드롭 (캔버스 히트테스트 우회용 백업 경로) ----------
