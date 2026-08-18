@@ -620,18 +620,37 @@ app.registerExtension({
         }, CHECK_INTERVAL_MS);
 
         api.addEventListener("clipboard.text", (event) => {
+            console.log("[ClipboardBridge][text] clipboard.text event received:", JSON.stringify(event.detail?.text)?.slice(0, 80));
             const { acceptInternalText } = getGlobalSettings();
-            if (!acceptInternalText && isRecentInternalCopy("text")) return;
+            const recentInternal = isRecentInternalCopy("text");
+            if (!acceptInternalText && recentInternal) {
+                // This fires for 2s after ANY Ctrl+C press anywhere on the
+                // ComfyUI page (copying a node, selecting node title text,
+                // etc.) - not just an actual "Copy Image/Text" action - so it
+                // can look like text paste is permanently broken if the user
+                // keeps testing right after using Ctrl+C inside ComfyUI.
+                console.log("[ClipboardBridge][text] blocked: recent in-app Ctrl+C/copy and Allow Comfy Text is off");
+                return;
+            }
 
             const newText = event.detail.text;
             const receivers = findNodesByType("ClipboardTextReceiver");
+            if (receivers.length === 0) {
+                console.log("[ClipboardBridge][text] no ClipboardTextReceiver node found on canvas");
+            }
             receivers.forEach((node) => {
                 const textWidget = node.widgets?.find((w) => w.name === "current_text");
-                if (!textWidget) return;
+                if (!textWidget) {
+                    console.log("[ClipboardBridge][text] node", node.id, "has no current_text widget");
+                    return;
+                }
 
                 const listenWidget = node.widgets?.find((w) => w.name === "listen");
                 const isListening = listenWidget ? listenWidget.value : false;
-                if (!isListening) return;
+                if (!isListening) {
+                    console.log("[ClipboardBridge][text] node", node.id, "ignored: listen is off");
+                    return;
+                }
 
                 const optionsInput = node.inputs?.find((inp) => inp.name === "options");
                 let mode = "Replace";
@@ -666,8 +685,12 @@ app.registerExtension({
                 // 건드리지 않는다. 그렇지 않으면 Undo로 과거 내용을 선택해둔
                 // 상태에서 중복 이벤트가 오는 순간 포인터가 다시 최신으로
                 // 튕겨나가버린다.
-                if (result === currentText) return;
+                if (result === currentText) {
+                    console.log("[ClipboardBridge][text] node", node.id, "ignored: result identical to current_text (duplicate event)");
+                    return;
+                }
 
+                console.log("[ClipboardBridge][text] node", node.id, "updated, mode=", mode);
                 pushHistory(node, result, MAX_TEXT_HISTORY);
                 textWidget.value = result;
             });
